@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"ragflow/internal/server"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -37,11 +38,11 @@ type OSSStorage struct {
 	client     *s3.Client
 	bucket     string
 	prefixPath string
-	config     *OSSConfig
+	config     *server.OSSConfig
 }
 
 // NewOSSStorage creates a new OSS storage instance
-func NewOSSStorage(config *OSSConfig) (*OSSStorage, error) {
+func NewOSSStorage(config *server.OSSConfig) (*OSSStorage, error) {
 	storage := &OSSStorage{
 		bucket:     config.Bucket,
 		prefixPath: config.PrefixPath,
@@ -60,8 +61,8 @@ func (o *OSSStorage) connect() error {
 
 	// Create static credentials
 	creds := credentials.NewStaticCredentialsProvider(
-		o.config.AccessKeyID,
-		o.config.SecretAccessKey,
+		o.config.AccessKey,
+		o.config.SecretKey,
 		"",
 	)
 
@@ -217,8 +218,8 @@ func (o *OSSStorage) Get(bucket, fnm string, tenantID ...string) ([]byte, error)
 	return nil, fmt.Errorf("failed to get object after retries")
 }
 
-// Rm removes an object from OSS
-func (o *OSSStorage) Rm(bucket, fnm string, tenantID ...string) error {
+// Remove removes an object from OSS
+func (o *OSSStorage) Remove(bucket, fnm string, tenantID ...string) error {
 	bucket, fnm = o.resolveBucketAndPath(bucket, fnm)
 
 	ctx := context.Background()
@@ -380,7 +381,7 @@ func (o *OSSStorage) Copy(srcBucket, srcPath, destBucket, destPath string) bool 
 // Move moves an object from source to destination
 func (o *OSSStorage) Move(srcBucket, srcPath, destBucket, destPath string) bool {
 	if o.Copy(srcBucket, srcPath, destBucket, destPath) {
-		if err := o.Rm(srcBucket, srcPath); err != nil {
+		if err := o.Remove(srcBucket, srcPath); err != nil {
 			zap.L().Error("Failed to remove source object after copy", zap.String("bucket", srcBucket), zap.String("key", srcPath), zap.Error(err))
 			return false
 		}
