@@ -385,13 +385,16 @@ class DocMetadataService:
             if result:
                 logging.error(f"Failed to insert metadata for document {doc_id}: {result}")
                 return False
-            # Force ES refresh to make metadata immediately available for search
+            # Force refresh so metadata is immediately searchable.
+            # Both Elasticsearch and OpenSearch backends expose refresh_idx;
+            # Infinity does not need a manual refresh.
             if not settings.DOC_ENGINE_INFINITY:
-                try:
-                    settings.docStoreConn.es.indices.refresh(index=index_name)
-                    logging.debug(f"Refreshed metadata index: {index_name}")
-                except Exception as e:
-                    logging.warning(f"Failed to refresh metadata index {index_name}: {e}")
+                refresh_idx = getattr(settings.docStoreConn, "refresh_idx", None)
+                if callable(refresh_idx):
+                    if refresh_idx(index_name):
+                        logging.debug(f"Refreshed metadata index: {index_name}")
+                else:
+                    logging.debug(f"Backend {type(settings.docStoreConn).__name__} has no refresh_idx; skipping")
             
             logging.debug(f"Successfully inserted metadata for document {doc_id}")
             return True
@@ -459,23 +462,18 @@ class DocMetadataService:
                         [kb_id]
                     )
                     if doc_exists:
-                        # Document exists - replace meta_fields entirely
-                        # Use upsert to fully replace the meta_fields field
-                        # (ES update with doc parameter does deep merge on object fields,
-                        # which would retain old keys that should be removed)
-                        settings.docStoreConn.es.update(
-                            index=index_name,
-                            id=doc_id,
-                            refresh=True,
-                            body={
-                                "script": {
-                                    "source": "ctx._source.meta_fields = params.meta_fields",
-                                    "params": {"meta_fields": processed_meta}
-                                }
-                            }
+                        # Document exists - replace meta_fields entirely.
+                        # Using update with a `doc` body would deep-merge the meta_fields
+                        # object and retain old keys that should be removed, so we delegate
+                        # to a backend-provided scripted assignment that fully overwrites it.
+                        replace_meta_fields = getattr(settings.docStoreConn, "replace_meta_fields", None)
+                        if callable(replace_meta_fields) and replace_meta_fields(index_name, doc_id, processed_meta):
+                            logging.debug(f"Successfully updated metadata for document {doc_id} via {type(settings.docStoreConn).__name__}.replace_meta_fields")
+                            return True
+                        logging.warning(
+                            f"replace_meta_fields unavailable or failed on backend "
+                            f"{type(settings.docStoreConn).__name__}; falling back to delete+insert"
                         )
-                        logging.debug(f"Successfully updated metadata for document {doc_id} using ES script update")
-                        return True
                 except Exception as e:
                     logging.debug(f"Document {doc_id} not found in index, will insert: {e}")
 
@@ -582,13 +580,15 @@ class DocMetadataService:
 
             logging.debug(f"[DROP EMPTY TABLE] Table {index_name} exists, checking if empty...")
 
-            # Use ES count API for accurate count
-            # Note: No need to refresh since delete operation already uses refresh=True
+            # Use the backend-native count primitive when available (ES + OS).
+            # No need to refresh since delete operation already uses refresh=True.
+            count_idx = getattr(settings.docStoreConn, "count_idx", None)
+            count_value = count_idx(index_name) if callable(count_idx) else -1
             try:
-                count_response = settings.docStoreConn.es.count(index=index_name)
-                total_count = count_response['count']
-                logging.debug(f"[DROP EMPTY TABLE] ES count API result: {total_count} documents")
-                is_empty = (total_count == 0)
+                if count_value < 0:
+                    raise RuntimeError("native count_idx unavailable or failed")
+                logging.debug(f"[DROP EMPTY TABLE] count_idx API result: {count_value} documents")
+                is_empty = (count_value == 0)
             except Exception as e:
                 logging.warning(f"[DROP EMPTY TABLE] Count API failed, falling back to search: {e}")
                 # Fallback to search if count fails
