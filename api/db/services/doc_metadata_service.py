@@ -393,6 +393,15 @@ class DocMetadataService:
                 if callable(refresh_idx):
                     if refresh_idx(index_name):
                         logging.debug(f"Refreshed metadata index: {index_name}")
+                    else:
+                        # A failed refresh can leave just-inserted metadata
+                        # invisible to subsequent reads; surface it so operators
+                        # can correlate stale-read complaints with the cause.
+                        logging.warning(
+                            f"Failed to refresh metadata index {index_name} on backend "
+                            f"{type(settings.docStoreConn).__name__}; "
+                            f"metadata may not be immediately searchable"
+                        )
                 else:
                     logging.debug(f"Backend {type(settings.docStoreConn).__name__} has no refresh_idx; skipping")
             
