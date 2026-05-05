@@ -474,6 +474,11 @@ class DocMetadataService:
                             f"replace_meta_fields unavailable or failed on backend "
                             f"{type(settings.docStoreConn).__name__}; falling back to delete+insert"
                         )
+                        # Mirror the Infinity fallback below so a failed scripted
+                        # replace still guarantees full overwrite semantics rather
+                        # than leaking through the "document not found" branch.
+                        cls.delete_document_metadata(doc_id, kb_id, tenant_id)
+                        return cls.insert_document_metadata(doc_id, processed_meta)
                 except Exception as e:
                     logging.debug(f"Document {doc_id} not found in index, will insert: {e}")
 
@@ -582,9 +587,12 @@ class DocMetadataService:
 
             # Use the backend-native count primitive when available (ES + OS).
             # No need to refresh since delete operation already uses refresh=True.
+            # The invocation lives inside the try/except so a future backend
+            # whose count_idx raises (instead of returning the -1 sentinel)
+            # still falls through to the search-based empty-table check.
             count_idx = getattr(settings.docStoreConn, "count_idx", None)
-            count_value = count_idx(index_name) if callable(count_idx) else -1
             try:
+                count_value = count_idx(index_name) if callable(count_idx) else -1
                 if count_value < 0:
                     raise RuntimeError("native count_idx unavailable or failed")
                 logging.debug(f"[DROP EMPTY TABLE] count_idx API result: {count_value} documents")
