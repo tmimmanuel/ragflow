@@ -81,6 +81,26 @@ def _install_module_stubs() -> None:
 _install_module_stubs()
 
 
+class _FakeFile:
+    """Minimal file-like stand-in supporting ``json.load``."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    def read(self, *_args, **_kwargs) -> str:
+        return self._content
+
+
+def _open_returning_payload(payload: dict):
+    """Build a context-manager mock for ``open`` that yields the JSON payload."""
+    import json as _json
+
+    fake_handle = MagicMock()
+    fake_handle.__enter__ = MagicMock(return_value=_FakeFile(_json.dumps(payload)))
+    fake_handle.__exit__ = MagicMock(return_value=False)
+    return MagicMock(return_value=fake_handle)
+
+
 def _resolve_os_connection_class():
     """Return the real OSConnection class.
 
@@ -266,23 +286,3 @@ class TestReplaceMetaFields:
             404, "document_missing_exception", {}
         )
         assert conn.replace_meta_fields("ragflow_doc_meta_t1", "absent", {"a": 1}) is False
-
-
-def _open_returning_payload(payload: dict):
-    """Build a context-manager mock for ``open`` that yields the JSON payload."""
-    import json as _json
-
-    fake_handle = MagicMock()
-    fake_handle.__enter__ = MagicMock(return_value=_FakeFile(_json.dumps(payload)))
-    fake_handle.__exit__ = MagicMock(return_value=False)
-    return MagicMock(return_value=fake_handle)
-
-
-class _FakeFile:
-    """Minimal file-like stand-in supporting ``json.load``."""
-
-    def __init__(self, content: str) -> None:
-        self._content = content
-
-    def read(self, *_args, **_kwargs) -> str:
-        return self._content
